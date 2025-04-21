@@ -4,3 +4,4 @@ gql
 ccxt
 requests
 SQLAlchemy
+ta
