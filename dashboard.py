@@ -1,17 +1,38 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
-import datetime
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from models import TradeSignal, Base
+from datetime import datetime
 
-# Connect to DB
-conn = sqlite3.connect("trade_signals.db", check_same_thread=False)
-c = conn.cursor()
+# Set up SQLAlchemy connection
+DATABASE_URL = "sqlite:///trade_signals.db"  # Or your production DB URL
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Streamlit config
+# Create tables if they don't exist               ##
+Base.metadata.create_all(bind=engine)             ##
 st.set_page_config(page_title="Crypto Signal Dashboard", layout="wide")
-
 st.title("📈 Crypto Trade Signal Dashboard")
 
-# Load signals
-df = pd.read_sql_query("SELECT * FROM signals ORDER BY timestamp DESC", conn)
+# Load data
+session = SessionLocal()
+signals = session.query(TradeSignal).order_by(TradeSignal.timestamp.desc()).all()
+session.close()
+
+# Convert to DataFrame
+df = pd.DataFrame([{
+    "timestamp": s.timestamp,
+    "symbol": s.symbol,
+    "signal": s.signal,
+    "price": s.price,
+    "strategy": s.strategy
+} for s in signals])
+
+if df.empty:
+    st.warning("No signals found in the database.")
+    st.stop()
 
 # Symbol filter
 symbols = df['symbol'].unique().tolist()
@@ -19,7 +40,6 @@ selected_symbol = st.selectbox("🔍 Filter by Symbol", ["All"] + symbols)
 
 if selected_symbol != "All":
     df = df[df['symbol'] == selected_symbol]
-
 # Calculate PnL for each signal
 st.subheader("💵 Signal Performance (Simple PnL)")
 pnl_data = []
