@@ -5,3 +5,4 @@ ccxt
 requests
 SQLAlchemy
 ta
+psycopg2-binary
