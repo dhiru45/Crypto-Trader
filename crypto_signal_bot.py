@@ -5,25 +5,40 @@ from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator
 import requests
 
-import sqlite3
+#import sqlite3
 from datetime import datetime
 
+from db import SessionLocal
+from models import TradeSignal
+
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from models import TradeSignal, Base
+
+DATABASE_URL = os.getenv("DATABASE_URL")  # This will be loaded from environment variable
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Create tables if they don't exist (run only once, or keep it here for simplicity)
+Base.metadata.create_all(bind=engine)
+
 # --- Initialize SQLite DB ---
-def init_db():
-    conn = sqlite3.connect("trade_signals.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS signals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT,
-            signal TEXT,
-            price REAL,
-            strategy TEXT,
-            timestamp TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+#def init_db():
+ #   conn = sqlite3.connect("trade_signals.db")
+  #  cursor = conn.cursor()
+   # cursor.execute("""
+    #    CREATE TABLE IF NOT EXISTS signals (
+     #       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      #      symbol TEXT,
+       #     signal TEXT,
+       #     price REAL,
+       #     strategy TEXT,
+       #     timestamp TEXT
+       # )
+    #""")
+    #conn.commit()
+    #conn.close()
 
 # --- Telegram Settings ---
 TELEGRAM_TOKEN = '7926616723:AAEceR0CDRXchNmOkw8vrInDXjQ40e3n_-A'
@@ -233,15 +248,23 @@ def apply_strategy(df):
 
 
 ## Saving Signals into the Database for Dashboaard 
-def save_signal(symbol, signal_type, price, strategy_name):
-    conn = sqlite3.connect("trade_signals.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO signals (symbol, signal, price, strategy, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-    """, (symbol, signal_type, price, strategy_name, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-    conn.commit()
-    conn.close()
+def save_signal(symbol, signal_type, price, strategy):
+    db = SessionLocal()
+    try:
+        new_signal = TradeSignal(
+            symbol=symbol,
+            signal=signal_type,
+            price=price,
+            strategy=strategy,
+            timestamp=datetime.now()
+        )
+        db.add(new_signal)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print("DB error:", e)
+    finally:
+        db.close()
 
 
 ## Scanning Market to find the trades
@@ -283,7 +306,7 @@ def scan_market():
 
 
 if __name__ == "__main__":
-    init_db()
+    Base.metadata.create_all(bind=engine)  # This ensures tables exist
     while True:
         print("\n🔁 Running market scan...")
         scan_market()
