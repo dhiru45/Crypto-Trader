@@ -152,7 +152,9 @@ def apply_strategy(df):
     ema_long = df['close'].ewm(span=21, adjust=False).mean()
     rsi = calculate_rsi(df['close'], 14)
     current_price = df['close'].iloc[-1]
-
+    macd = df['close'].ewm(span=12, adjust=False).mean() - df['close'].ewm(span=26, adjust=False).mean()  # MACD Line
+    signal_line = macd.ewm(span=9, adjust=False).mean()  # Signal Line
+    
     print(f"Price: {current_price:.2f}, EMA9: {ema_short.iloc[-1]:.2f}, EMA21: {ema_long.iloc[-1]:.2f}, RSI: {rsi.iloc[-1]:.2f}")
 
     # --- Strategy 1: EMA Crossover + RSI
@@ -207,9 +209,26 @@ def apply_strategy(df):
     elif ma_short.iloc[-2] > ma_long.iloc[-2] and ma_short.iloc[-1] < ma_long.iloc[-1]:
         print("🔹 MA Crossover: SELL signal")
         return "SELL", "MA Crossover"
+    
+        # --- Strategy 4: MACD Signal Cross
+    if macd.iloc[-2] < signal_line.iloc[-2] and macd.iloc[-1] > signal_line.iloc[-1]:
+        print("🔹 MACD cross above Signal: BUY signal")
+        return "BUY", "MACD Signal Cross"
+    
+    elif macd.iloc[-2] > signal_line.iloc[-2] and macd.iloc[-1] < signal_line.iloc[-1]:
+        print("🔹 MACD cross below Signal: SELL signal")
+        return "SELL", "MACD Signal Cross"
 
     print("No valid strategy signal detected.")
     return None
+
+
+
+
+
+
+
+
 
 
 
