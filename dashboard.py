@@ -4,10 +4,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import TradeSignal, Base
 from datetime import datetime
+from db import SessionLocal
 
 # Set up SQLAlchemy connection
-DATABASE_URL = "sqlite:///trade_signals.db"  # Or your production DB URL
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+import os
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Streamlit config
