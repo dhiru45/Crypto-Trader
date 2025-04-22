@@ -5,6 +5,7 @@ Base = declarative_base()
 
 class TradeSignal(Base):
     __tablename__ = 'signals'
+    __table_args__ = {'schema': 'public'}  # Force public schema
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     symbol = Column(String)
