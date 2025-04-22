@@ -254,7 +254,7 @@ def save_signal(symbol, signal_type, price, strategy):
         new_signal = TradeSignal(
             symbol=symbol,
             signal=signal_type,
-            price=price,
+            price=float(price),
             strategy=strategy,
             timestamp=datetime.now()
         )
