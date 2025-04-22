@@ -49,6 +49,41 @@ def fetch_ohlcv(symbol, timeframe='5m', limit=100):
 
 
 
+def ma_crossover_strategy(df, short_window=20, long_window=50):
+    df['MA_short'] = df['close'].rolling(window=short_window).mean()
+    df['MA_long'] = df['close'].rolling(window=long_window).mean()
+
+    if df['MA_short'].isnull().any() or df['MA_long'].isnull().any():
+        return None  # Not enough data yet
+
+    if (
+        df['MA_short'].iloc[-2] < df['MA_long'].iloc[-2] and
+        df['MA_short'].iloc[-1] > df['MA_long'].iloc[-1]
+    ):
+        print("✅ MA Crossover Buy Signal")
+        return {
+            'strategy': 'MA Crossover',
+            'signal': 'buy',
+            'price': df['close'].iloc[-1],
+            'details': f'Short MA ({short_window}) crossed above Long MA ({long_window})'
+        }
+
+    elif (
+        df['MA_short'].iloc[-2] > df['MA_long'].iloc[-2] and
+        df['MA_short'].iloc[-1] < df['MA_long'].iloc[-1]
+    ):
+        print("❌ MA Crossover Sell Signal")
+        return {
+            'strategy': 'MA Crossover',
+            'signal': 'sell',
+            'price': df['close'].iloc[-1],
+            'details': f'Short MA ({short_window}) crossed below Long MA ({long_window})'
+        }
+
+    return None
+
+
+
 
 
 def support_resistance_strategy(df, rsi_period=14, bounce_tolerance=0.005):
@@ -112,32 +147,69 @@ def calculate_rsi(series, period=14):
 
 
 def apply_strategy(df):
-    # Strategy 1: RSI + EMA Crossover
+    # --- Indicators ---
     ema_short = df['close'].ewm(span=9, adjust=False).mean()
     ema_long = df['close'].ewm(span=21, adjust=False).mean()
     rsi = calculate_rsi(df['close'], 14)
+    current_price = df['close'].iloc[-1]
 
-    if ema_short.iloc[-2] < ema_long.iloc[-2] and ema_short.iloc[-1] > ema_long.iloc[-1] and rsi.iloc[-1] < 70:
-        return "BUY"
-    elif ema_short.iloc[-2] > ema_long.iloc[-2] and ema_short.iloc[-1] < ema_long.iloc[-1] and rsi.iloc[-1] > 30:
-        return "SELL"
+    print(f"Price: {current_price:.2f}, EMA9: {ema_short.iloc[-1]:.2f}, EMA21: {ema_long.iloc[-1]:.2f}, RSI: {rsi.iloc[-1]:.2f}")
 
-    # Strategy 2: Support/Resistance Bounce with RSI filter
-    signal = support_resistance_strategy(df)
-    if signal:
-        return signal["signal"], signal["strategy"]
+    # --- Strategy 1: EMA Crossover + RSI
+    if (
+        ema_short.iloc[-2] < ema_long.iloc[-2] and
+        ema_short.iloc[-1] > ema_long.iloc[-1] and
+        rsi.iloc[-1] < 75
+    ):
+        print("🔹 EMA crossover + RSI < 75: BUY signal")
+        return "BUY", "RSI + EMA Crossover"
 
-    # Strategy 3: Breakout + Volume Spike
-    breakout_signal = breakout_volume_spike_strategy(df)
-    if breakout_signal:
-        return breakout_signal, "Breakout + Volume Spike"
+    elif (
+        ema_short.iloc[-2] > ema_long.iloc[-2] and
+        ema_short.iloc[-1] < ema_long.iloc[-1] and
+        rsi.iloc[-1] > 25
+    ):
+        print("🔹 EMA crossover + RSI > 25: SELL signal")
+        return "SELL", "RSI + EMA Crossover"
 
+    # --- Strategy 2: Support/Resistance Bounce (with RSI filter)
+    sr_signal = support_resistance_strategy(df)
+    if sr_signal:
+        print(f"🔹 Support/Resistance Bounce Signal: {sr_signal}")
+        return sr_signal["signal"], sr_signal["strategy"]
+
+    # --- Strategy 3: Breakout with Volume Spike
+    recent_high = df['high'][:-1].max()
+    breakout_price = recent_high * 1.005  # reduced from 1.02
+    avg_volume = df['volume'].rolling(window=20).mean().iloc[-1]
+    current_volume = df['volume'].iloc[-1]
+
+    print(f"Breakout target: {breakout_price:.2f}, Current price: {current_price:.2f}, Avg vol: {avg_volume:.2f}, Current vol: {current_volume:.2f}")
+
+    if current_price > breakout_price and current_volume > avg_volume * 1.2:
+        print("🔹 Breakout + Volume Spike: BUY signal")
+        return "BUY", "Breakout + Volume Spike"
+
+    elif current_price < breakout_price and current_volume > avg_volume * 1.2:
+        print("🔹 Breakdown + Volume Spike: SELL signal")
+        return "SELL", "Breakout + Volume Spike"
+
+    # --- Strategy 4: Moving Average Crossover
+    # Calculate short and long-term moving averages
+    ma_short = df['close'].rolling(window=20).mean()
+    ma_long = df['close'].rolling(window=50).mean()
+
+    # Check for MA crossover
+    if ma_short.iloc[-2] < ma_long.iloc[-2] and ma_short.iloc[-1] > ma_long.iloc[-1]:
+        print("🔹 MA Crossover: BUY signal")
+        return "BUY", "MA Crossover"
+
+    elif ma_short.iloc[-2] > ma_long.iloc[-2] and ma_short.iloc[-1] < ma_long.iloc[-1]:
+        print("🔹 MA Crossover: SELL signal")
+        return "SELL", "MA Crossover"
+
+    print("No valid strategy signal detected.")
     return None
-
-
-
-
-
 
 
 
