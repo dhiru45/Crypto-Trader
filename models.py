@@ -10,6 +10,6 @@ class TradeSignal(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     symbol = Column(String)
     signal = Column(String)
-    price = Column(Float)
+    price=float(price)
     strategy = Column(String)
     timestamp = Column(DateTime)
