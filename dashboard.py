@@ -12,6 +12,10 @@ from sklearn.metrics import classification_report
 
 # Set up SQLAlchemy connection
 DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    st.error("Environment variable DATABASE_URL is not set.")
+    st.stop()
+
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
@@ -65,11 +69,19 @@ for i in range(len(model_df) - 1):
         pnl_per_trade.append(np.nan)
 
 model_df['pnl_per_trade'] = pnl_per_trade + [np.nan]*(len(model_df) - len(pnl_per_trade))
-model_df = model_df[['price_diff', 'rolling_std', 'pnl_per_trade', 'target']].dropna()
 
+# Check how many rows are left after dropping NaNs
+model_df.dropna(inplace=True)
+st.text(f"📊 Rows used for training: {len(model_df)}")
+
+# Check if enough data is available
+if len(model_df) <= 10:
+    st.warning("Not enough data after feature engineering to train the model.")
+    st.stop()
+
+# Feature selection
 X = model_df[['price_diff', 'rolling_std', 'pnl_per_trade']]
 y = model_df['target']
-
 
 # Train/Test Split
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
@@ -161,7 +173,7 @@ if pnl_data:
     st.dataframe(strat_summary.style.format({"avg_pnl": "{:.2f}", "total_pnl": "{:.2f}", "win_rate": "{:.2f}%"}))
 
     # Filters and Download
-    st.markdown("### 📥 Export PnL Data")
+    st.markdown("### 📅 Export PnL Data")
     with st.expander("Download Strategy PnL Report"):
         csv = pnl_df.to_csv(index=False).encode("utf-8")
         st.download_button(
