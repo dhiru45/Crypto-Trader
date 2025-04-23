@@ -65,11 +65,11 @@ for i in range(len(model_df) - 1):
         pnl_per_trade.append(np.nan)
 
 model_df['pnl_per_trade'] = pnl_per_trade + [np.nan]*(len(model_df) - len(pnl_per_trade))
-model_df.dropna(inplace=True)
+model_df = model_df[['price_diff', 'rolling_std', 'pnl_per_trade', 'target']].dropna()
 
-# Feature selection
 X = model_df[['price_diff', 'rolling_std', 'pnl_per_trade']]
 y = model_df['target']
+
 
 # Train/Test Split
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
