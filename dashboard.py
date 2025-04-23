@@ -5,6 +5,10 @@ from sqlalchemy.orm import sessionmaker
 from models import TradeSignal, Base
 from datetime import datetime
 import os
+import numpy as np
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
 
 # Set up SQLAlchemy connection
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -36,6 +40,87 @@ df = pd.DataFrame([{
 if df.empty:
     st.warning("No signals found in the database.")
     st.stop()
+
+# Preprocess for model
+model_df = df.copy()
+model_df['timestamp'] = pd.to_datetime(model_df['timestamp'], utc=True)
+model_df['price_diff'] = model_df['price'].diff()
+model_df['future_price'] = model_df['price'].shift(-1)
+model_df['price_change'] = model_df['future_price'] - model_df['price']
+model_df['target'] = model_df['price_change'].apply(lambda x: 1 if x > 0 else 0)
+
+# --- New Features ---
+model_df['rolling_std'] = model_df['price'].rolling(window=14).std()
+
+# PnL per trade (BUY -> SELL)
+pnl_per_trade = []
+open_position = None
+for i in range(len(model_df) - 1):
+    entry = model_df.iloc[i]
+    exit_ = model_df.iloc[i + 1]
+    if entry['signal'] == "BUY" and exit_['signal'] == "SELL" and entry['symbol'] == exit_['symbol']:
+        pnl = exit_['price'] - entry['price']
+        pnl_per_trade.append(pnl)
+    else:
+        pnl_per_trade.append(np.nan)
+
+model_df['pnl_per_trade'] = pnl_per_trade + [np.nan]*(len(model_df) - len(pnl_per_trade))
+model_df.dropna(inplace=True)
+
+# Feature selection
+X = model_df[['price_diff', 'rolling_std', 'pnl_per_trade']]
+y = model_df['target']
+
+# Train/Test Split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+# Train enhanced model using Gradient Boosting
+clf = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, random_state=42)
+clf.fit(X_train, y_train)
+
+# Evaluation
+y_pred = clf.predict(X_test)
+st.subheader("🤖 AI Model Evaluation")
+st.text(classification_report(y_test, y_pred))
+
+# Paper trading simulation
+st.subheader("💰 Paper Trading Simulation")
+paper_cash = 10000
+positions = []
+paper_trades = []
+error_logs = []
+for i in range(len(model_df)):
+    row = model_df.iloc[i]
+    try:
+        prediction = clf.predict([row[['price_diff', 'rolling_std', 'pnl_per_trade']]])[0]
+    except Exception as e:
+        error_logs.append(f"Prediction failed at {row['timestamp']} → {e}")
+        continue
+    if prediction == 1 and not positions:
+        positions.append((row['timestamp'], row['price']))
+    elif prediction == 0 and positions:
+        entry_time, entry_price = positions.pop(0)
+        pnl = row['price'] - entry_price
+        paper_cash += pnl
+        paper_trades.append({
+            "entry_time": entry_time,
+            "exit_time": row['timestamp'],
+            "entry_price": entry_price,
+            "exit_price": row['price'],
+            "pnl": pnl,
+            "balance": paper_cash
+        })
+
+if paper_trades:
+    pt_df = pd.DataFrame(paper_trades)
+    st.dataframe(pt_df)
+    st.write(f"Final Balance: ${paper_cash:.2f}")
+
+if error_logs:
+    st.subheader("⚠️ Prediction Errors Log")
+    with st.expander("View Prediction Errors"):
+        for log in error_logs:
+            st.write(log)
 
 # Symbol filter
 symbols = df['symbol'].unique().tolist()
