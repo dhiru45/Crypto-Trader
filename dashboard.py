@@ -2,210 +2,130 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models import TradeSignal, Base
-from datetime import datetime
 import os
-import numpy as np
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
+from datetime import datetime
+from models import Base, TradeSignal, TradeLog
+from timezone_utils import IST
 
-# Set up SQLAlchemy connection
+# ──────────────────────────────────────────────────────────────────────────────
+# 1) DATABASE SETUP
+# ──────────────────────────────────────────────────────────────────────────────
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     st.error("Environment variable DATABASE_URL is not set.")
     st.stop()
 
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-else:
-    engine = create_engine(DATABASE_URL)
+engine = (
+    create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+    if DATABASE_URL.startswith("sqlite")
+    else create_engine(DATABASE_URL)
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Streamlit config
+# ensure tables exist
 Base.metadata.create_all(bind=engine)
-st.set_page_config(page_title="Crypto Signal Dashboard", layout="wide")
-st.title("📈 Crypto Trade Signal Dashboard")
 
-# Load data
-session = SessionLocal()
-signals = session.query(TradeSignal).order_by(TradeSignal.timestamp.desc()).all()
-session.close()
+# ──────────────────────────────────────────────────────────────────────────────
+# 2) STREAMLIT LAYOUT
+# ──────────────────────────────────────────────────────────────────────────────
 
-# Convert to DataFrame
-df = pd.DataFrame([{
-    "timestamp": s.timestamp,
-    "symbol": s.symbol,
-    "signal": s.signal,
-    "price": s.price,
-    "strategy": s.strategy
-} for s in signals])
+st.set_page_config(page_title="📊 Crypto Bot Dashboard", layout="wide")
+st.title("📊 Crypto Signal & Trade Dashboard")
+st.write("Last updated (IST):", datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S %Z"))
 
-if df.empty:
-    st.warning("No signals found in the database.")
-    st.stop()
+# ──────────────────────────────────────────────────────────────────────────────
+# 3) QUERY YOUR DATA
+# ──────────────────────────────────────────────────────────────────────────────
 
-# Preprocess for model
-model_df = df.copy()
-model_df['timestamp'] = pd.to_datetime(model_df['timestamp'], utc=True)
-model_df['price_diff'] = model_df['price'].diff()
-model_df['future_price'] = model_df['price'].shift(-1)
-model_df['price_change'] = model_df['future_price'] - model_df['price']
-model_df['target'] = model_df['price_change'].apply(lambda x: 1 if x > 0 else 0)
+db = SessionLocal()
+# all signals, newest first
+signals = db.query(TradeSignal).order_by(TradeSignal.timestamp.desc()).all()
+# all trades, newest first
+trades  = db.query(TradeLog)  .order_by(TradeLog.entry_time.desc()).all()
+db.close()
 
-# --- New Features ---
-model_df['rolling_std'] = model_df['price'].rolling(window=14).std()
+# ──────────────────────────────────────────────────────────────────────────────
+# 4) SHOW RAW SIGNALS
+# ──────────────────────────────────────────────────────────────────────────────
 
-# PnL per trade (BUY -> SELL)
-pnl_per_trade = []
-open_position = None
-for i in range(len(model_df) - 1):
-    entry = model_df.iloc[i]
-    exit_ = model_df.iloc[i + 1]
-    if entry['signal'] == "BUY" and exit_['signal'] == "SELL" and entry['symbol'] == exit_['symbol']:
-        pnl = exit_['price'] - entry['price']
-        pnl_per_trade.append(pnl)
-    else:
-        pnl_per_trade.append(np.nan)
-
-model_df['pnl_per_trade'] = pnl_per_trade + [np.nan]*(len(model_df) - len(pnl_per_trade))
-
-# Check how many rows are left after dropping NaNs
-model_df.dropna(inplace=True)
-st.text(f"📊 Rows used for training: {len(model_df)}")
-
-# Check if enough data is available
-if len(model_df) <= 10:
-    st.warning("Not enough data after feature engineering to train the model.")
-    st.stop()
-
-# Feature selection
-X = model_df[['price_diff', 'rolling_std', 'pnl_per_trade']]
-y = model_df['target']
-
-# Train/Test Split
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-
-# Train enhanced model using Gradient Boosting
-clf = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, random_state=42)
-clf.fit(X_train, y_train)
-
-# Evaluation
-y_pred = clf.predict(X_test)
-st.subheader("🤖 AI Model Evaluation")
-st.text(classification_report(y_test, y_pred))
-
-# Paper trading simulation
-st.subheader("💰 Paper Trading Simulation")
-paper_cash = 10000
-positions = []
-paper_trades = []
-error_logs = []
-for i in range(len(model_df)):
-    row = model_df.iloc[i]
-    try:
-        prediction = clf.predict([row[['price_diff', 'rolling_std', 'pnl_per_trade']]])[0]
-    except Exception as e:
-        error_logs.append(f"Prediction failed at {row['timestamp']} → {e}")
-        continue
-    if prediction == 1 and not positions:
-        positions.append((row['timestamp'], row['price']))
-    elif prediction == 0 and positions:
-        entry_time, entry_price = positions.pop(0)
-        pnl = row['price'] - entry_price
-        paper_cash += pnl
-        paper_trades.append({
-            "entry_time": entry_time,
-            "exit_time": row['timestamp'],
-            "entry_price": entry_price,
-            "exit_price": row['price'],
-            "pnl": pnl,
-            "balance": paper_cash
-        })
-
-if paper_trades:
-    pt_df = pd.DataFrame(paper_trades)
-    st.dataframe(pt_df)
-    st.write(f"Final Balance: ${paper_cash:.2f}")
-
-if error_logs:
-    st.subheader("⚠️ Prediction Errors Log")
-    with st.expander("View Prediction Errors"):
-        for log in error_logs:
-            st.write(log)
-
-# Symbol filter
-symbols = df['symbol'].unique().tolist()
-selected_symbol = st.selectbox("🔍 Filter by Symbol", ["All"] + symbols)
-
-if selected_symbol != "All":
-    df = df[df['symbol'] == selected_symbol]
-
-# Strategy-specific PnL Analysis
-st.subheader("📊 Strategy-specific Performance")
-pnl_data = []
-for strategy in df['strategy'].unique():
-    strat_df = df[df['strategy'] == strategy]
-    for i in range(len(strat_df) - 1):
-        entry = strat_df.iloc[i]
-        exit_ = strat_df.iloc[i + 1]
-        if entry['signal'] == "BUY" and entry['symbol'] == exit_['symbol']:
-            pnl = exit_['price'] - entry['price']
-            pnl_data.append({
-                "strategy": strategy,
-                "symbol": entry['symbol'],
-                "entry_price": entry['price'],
-                "exit_price": exit_['price'],
-                "pnl": pnl,
-                "entry_time": entry['timestamp'],
-                "exit_time": exit_['timestamp']
-            })
-
-if pnl_data:
-    pnl_df = pd.DataFrame(pnl_data)
-    strat_summary = pnl_df.groupby("strategy").agg(
-        trades=("pnl", "count"),
-        avg_pnl=("pnl", "mean"),
-        total_pnl=("pnl", "sum"),
-        win_rate=("pnl", lambda x: (x > 0).sum() / len(x) * 100)
-    ).reset_index()
-
-    st.dataframe(strat_summary.style.format({"avg_pnl": "{:.2f}", "total_pnl": "{:.2f}", "win_rate": "{:.2f}%"}))
-
-    # Filters and Download
-    st.markdown("### 📅 Export PnL Data")
-    with st.expander("Download Strategy PnL Report"):
-        csv = pnl_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name="strategy_pnl_report.csv",
-            mime="text/csv"
-        )
-
-    # Chart
-    st.markdown("### 📈 PnL by Strategy")
-    st.bar_chart(strat_summary.set_index("strategy")["total_pnl"])
-
+if signals:
+    st.subheader("🔔 Raw Trade Signals")
+    sig_df = pd.DataFrame([{
+        "ID": s.id,
+        "Time (IST)": s.timestamp.astimezone(IST).strftime("%Y-%m-%d %H:%M:%S"),
+        "Symbol": s.symbol,
+        "Action": s.signal,
+        "Price": s.price,
+        "Strategy": s.strategy
+    } for s in signals])
+    st.dataframe(sig_df)
 else:
-    st.info("Not enough data to evaluate strategy PnL.")
+    st.info("No signals yet.")
 
-# Latest Signals Table
-st.subheader("📋 Latest Trade Signals")
-st.dataframe(df.head(50))
+# ──────────────────────────────────────────────────────────────────────────────
+# 5) SHOW PAPER TRADES
+# ──────────────────────────────────────────────────────────────────────────────
 
-# Daily Summary
-st.subheader("📆 Daily Summary")
-df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
-df['date'] = df['timestamp'].dt.date
-daily_summary = df.groupby(['date', 'signal']).size().unstack(fill_value=0)
-st.bar_chart(daily_summary)
+if trades:
+    st.subheader("💼 Paper Trades Log")
+    trades_df = pd.DataFrame([{
+        "ID":           t.id,
+        "Entry Time":   t.entry_time.astimezone(IST).strftime("%Y-%m-%d %H:%M:%S"),
+        "Exit Time":    (t.exit_time  .astimezone(IST).strftime("%Y-%m-%d %H:%M:%S")
+                          if t.exit_time else "—"),
+        "Symbol":       t.symbol,
+        "Action":       t.action,
+        "Entry Price":  t.entry_price,
+        "Exit Price":   (t.exit_price if t.exit_price else "—"),
+        "Stop-Loss":    t.stop_loss,
+        "Take-Profit":  t.take_profit,
+        "PnL":          (f"{t.pnl:.2f}" if t.pnl is not None else "—"),
+        "Status":       t.status,
+        "Reason":       t.reason
+    } for t in trades])
+    st.dataframe(trades_df)
+else:
+    st.info("No paper trades yet.")
 
-# Price Chart
-if not df.empty:
-    chart_df = df[['timestamp', 'price']].copy()
-    chart_df['timestamp'] = pd.to_datetime(chart_df['timestamp'], utc=True)
-    chart_df.set_index('timestamp', inplace=True)
-    st.line_chart(chart_df)
+# ──────────────────────────────────────────────────────────────────────────────
+# 6) SIMPLE METRICS
+# ──────────────────────────────────────────────────────────────────────────────
 
-st.caption("Built with ❤️ using Streamlit")
+st.subheader("📈 High-Level Metrics")
+col1, col2 = st.columns(2)
+
+with col1:
+    total_signals = len(signals)
+    st.metric("Total Signals", total_signals)
+
+    by_strat = sig_df["Strategy"].value_counts().rename_axis("Strategy").reset_index(name="Count")
+    st.bar_chart(by_strat.set_index("Strategy")["Count"])
+
+with col2:
+    total_trades = len(trades_df)
+    st.metric("Total Trades", total_trades)
+
+    # basic PnL
+    closed = trades_df[trades_df["Status"] == "closed"]
+    if not closed.empty:
+        avg_pnl = closed["PnL"].astype(float).mean()
+        win_rate = (closed["PnL"].astype(float) > 0).mean() * 100
+        st.metric("Avg PnL per trade", f"{avg_pnl:.2f}")
+        st.metric("Win Rate", f"{win_rate:.1f}%")
+    else:
+        st.write("No closed trades to summarize.")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 7) OPTIONAL: DEDUPE HINT FOR YOUR BOT
+# ──────────────────────────────────────────────────────────────────────────────
+
+st.markdown(
+    """
+    ---
+    **👷‍♂️ Note for your bot**  
+    To avoid duplicate signals for the same open position, you can:
+    1. Check `TradeLog` for any `status='open'` on that symbol before issuing a new entry.  
+    2. Or, once you save a `TradeSignal` for a symbol+strategy, only allow the next signal after you see a closing trade for that symbol.  
+    """
+)
