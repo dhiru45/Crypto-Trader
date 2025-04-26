@@ -5,7 +5,10 @@ from sqlalchemy.orm import sessionmaker
 import os
 from datetime import datetime
 from models import Base, TradeSignal, TradeLog
-from timezone_utils import IST
+from datetime import timezone, timedelta, datetime
+
+# India Standard Time (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1) DATABASE SETUP
