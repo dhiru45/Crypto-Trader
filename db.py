@@ -1,7 +1,7 @@
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models import Base
+from models import Base, TradeSignal 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///trade_signals.db")
 
@@ -12,6 +12,3 @@ else:
     engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Run once to create tables
-Base.metadata.create_all(bind=engine)
